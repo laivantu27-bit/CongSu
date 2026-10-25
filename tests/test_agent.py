@@ -15,6 +15,106 @@ class FakeOllamaClient:
 
 
 class AgentWorkerTests(unittest.TestCase):
+    def test_basic_desktop_tools_run_without_approval(self):
+        tool_calls = [
+            ("click", {"x": 10, "y": 20}),
+            ("type_text", {"text": "Xin chào"}),
+            ("press_key", {"key": "enter"}),
+        ]
+        for name, arguments in tool_calls:
+            with self.subTest(tool=name):
+                client = FakeOllamaClient(
+                    [
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": name,
+                                        "arguments": arguments,
+                                    }
+                                }
+                            ],
+                        },
+                        {"role": "assistant", "content": "Đã thực hiện."},
+                    ]
+                )
+                worker = AgentWorker(
+                    client, [{"role": "user", "content": "Thực hiện"}]
+                )
+                approval_requests = []
+                worker.approval_requested.connect(approval_requests.append)
+
+                with patch(
+                    "assistant_desktop.agent.execute_tool",
+                    return_value="Thành công.",
+                ) as execute_tool:
+                    response = worker._run_agent()
+
+                self.assertEqual(response, "Đã thực hiện.")
+                execute_tool.assert_called_once_with(name, arguments)
+                self.assertEqual(approval_requests, [])
+
+    def test_memory_context_is_sent_to_model_without_persisting_in_history(self):
+        client = FakeOllamaClient(
+            [{"role": "assistant", "content": "Mình nhớ bạn thích phở."}]
+        )
+        messages = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "Bạn nhớ món tôi thích không?"},
+        ]
+        worker = AgentWorker(
+            client,
+            messages.copy(),
+            memory_context="preference: món phở",
+        )
+
+        self.assertEqual(worker._run_agent(), "Mình nhớ bạn thích phở.")
+        model_messages = client.calls[0][0]
+        self.assertEqual(model_messages[1]["role"], "user")
+        self.assertIn("preference: món phở", model_messages[1]["content"])
+        self.assertEqual(len(worker._messages), len(messages) + 1)
+        self.assertFalse(
+            any(
+                "preference: món phở" in message.get("content", "")
+                for message in worker._messages
+            )
+        )
+
+    def test_invalid_tool_call_preflight_prevents_partial_execution(self):
+        client = FakeOllamaClient(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "click",
+                                "arguments": {"x": 10, "y": 20},
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "run_shell",
+                                "arguments": {"command": "whoami"},
+                            }
+                        },
+                    ],
+                }
+            ]
+        )
+        worker = AgentWorker(
+            client, [{"role": "user", "content": "Thực hiện"}]
+        )
+
+        with patch("assistant_desktop.agent.execute_tool") as execute_tool:
+            response = worker._run_agent()
+
+        self.assertIn("không hợp lệ", response)
+        execute_tool.assert_not_called()
+
     def test_approved_tool_runs_then_model_returns_reply(self):
         client = FakeOllamaClient(
             [
@@ -62,8 +162,8 @@ class AgentWorkerTests(unittest.TestCase):
                     "tool_calls": [
                         {
                             "function": {
-                                "name": "type_text",
-                                "arguments": {"text": "Xin chào"},
+                                "name": "open_application",
+                                "arguments": {"app_id": "notepad"},
                             }
                         }
                     ],

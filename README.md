@@ -1,6 +1,6 @@
 # Trợ lý AI desktop
 
-Ứng dụng desktop Python chạy trên Windows, chat tiếng Việt với Ollama local, nhận lời nói bằng faster-whisper, đọc câu trả lời bằng Piper và gọi một số tool desktop có giới hạn. Trợ lý không chạy shell hay tự ý thay đổi file.
+Ứng dụng desktop Python chạy trên Windows, chat tiếng Việt với Ollama local, hỗ trợ trò chuyện đồng cảm, memory dài hạn cục bộ, Playwright đọc web, thao tác workspace giới hạn và MCP server stdio. Không chạy lệnh shell tùy ý.
 
 ## Yêu cầu
 
@@ -23,6 +23,26 @@ ollama pull qwen2.5:7b
 py -m assistant_desktop
 ```
 
+Cài Playwright và trình duyệt Chromium nếu cần đọc trang web:
+
+```powershell
+py -m pip install -e ".[browser]"
+py -m playwright install chromium
+```
+
+Chạy MCP server qua stdio (cần cài extra `mcp`):
+
+```powershell
+py -m pip install -e ".[mcp,browser]"
+assistant-mcp
+```
+
+MCP server dùng stdio và nên được cấu hình trực tiếp trong MCP client đáng tin cậy. Không mở server này ra mạng. Các thao tác ghi/xóa workspace và memory qua MCP không hiện hộp thoại xác nhận trong ứng dụng; hãy bật xác nhận tool trong MCP client.
+
+Workspace mặc định là `C:\CongSu\workspace`. Có thể thay đổi bằng biến môi trường `ASSISTANT_WORKSPACE`. File tools chỉ thao tác bên trong thư mục này; chỉ đọc UTF-8; giới hạn 1 MB mỗi tệp; xóa chỉ áp dụng cho một file, không xóa thư mục.
+
+Lệnh hệ thống chỉ gồm `python_version`, `git_version` và `ollama_version`, chạy bằng argv cố định, không qua shell và không nhận lệnh tùy ý.
+
 Tải một voice tiếng Việt theo hướng dẫn [Piper Python API](https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/API_PYTHON.md), sau đó đặt `PIPER_VOICE` tới file `.onnx` của voice đó. Có thể cấu hình endpoint và model Ollama bằng biến môi trường:
 
 ```powershell
@@ -37,8 +57,14 @@ py -m assistant_desktop
 - Giao diện chat desktop bằng PySide6.
 - Ghi âm bằng micro và nhận dạng tiếng Việt bằng faster-whisper; bản ghi được xử lý cục bộ.
 - Đọc câu trả lời mới nhất bằng Piper khi bấm nút; cần cài extra `tts` và cấu hình model voice tiếng Việt.
-- Agent có thể đề xuất mở Notepad, Calculator, Explorer, Paint hoặc trình duyệt; click chuột; gõ tối đa 500 ký tự; và nhấn một phím trong danh sách giới hạn.
-- Mỗi thao tác desktop hiện hộp thoại xác nhận riêng. Dừng nếu từ chối hoặc không xác nhận; tối đa 5 tool call cho mỗi lượt.
+- Agent trò chuyện đồng cảm bằng tiếng Việt, ghi chú một số sở thích/hoạt động được nhận diện từ lời người dùng vào SQLite cục bộ, và đưa ghi chú liên quan vào ngữ cảnh chat. Không lưu toàn bộ hội thoại. Nút **Xem memory** và **Xóa memory** cho phép kiểm tra/xóa; memory cũng có thể được quản lý qua MCP.
+- Agent có thể đề xuất mở Notepad, Calculator, Explorer hoặc Paint; click chuột; gõ tối đa 500 ký tự; và nhấn phím trong danh sách giới hạn.
+- Click chuột, gõ tối đa 500 ký tự và nhấn phím trong danh sách cho phép không cần xác nhận; chỉ thực hiện thao tác khi người dùng yêu cầu. Mở ứng dụng vẫn cần xác nhận riêng.
+- Playwright có thể đọc văn bản tối đa 12.000 ký tự từ trang công khai http/https. Browser headless, không click/gửi biểu mẫu/đăng nhập, chặn host nội bộ; cần cài extra `browser` và Chromium.
+- Workspace tools liệt kê/đọc tệp; ghi đè và xóa tệp yêu cầu xác nhận trong ứng dụng. File access giới hạn trong `C:\CongSu\workspace` (hoặc `ASSISTANT_WORKSPACE`).
+- Tool orchestration kiểm tra toàn bộ kế hoạch trước khi chạy, dừng nếu có thao tác không hợp lệ; tối đa 5 tool call cho mỗi lượt.
+- Không chạy lệnh shell tùy ý. Chỉ có lệnh xem phiên bản Python, Git, Ollama trong allowlist; yêu cầu xác nhận trong ứng dụng.
+- MCP server stdio expose workspace, browser read-only, memory và lệnh phiên bản allowlist. Không mở server ra mạng; MCP client cần hỏi trước với thao tác ghi/xóa.
 - Gõ tiếng Việt tạm dùng clipboard Windows; nội dung văn bản trước đó được khôi phục sau thao tác.
 - PyAutoGUI fail-safe bật; đưa chuột lên góc trên-trái để hủy thao tác chuột/bàn phím.
 - Lần đầu chạy faster-whisper có thể cần tải model nhận dạng về máy.
@@ -47,10 +73,4 @@ py -m assistant_desktop
 - Thông báo lỗi khi Ollama chưa chạy, sai model hoặc kết nối thất bại.
 - Nút xóa hội thoại để bắt đầu phiên mới.
 
-## Lộ trình
-
-1. Chat local, giao diện desktop, STT/TTS tiếng Việt và tool desktop cơ bản có xác nhận (hiện tại).
-2. Bổ sung Playwright để thao tác trình duyệt theo trang, vẫn cần xác nhận trước mỗi hành động.
-3. Bổ sung thao tác file được giới hạn trong thư mục người dùng cho phép, memory có kiểm soát và MCP khi cần.
-
-Không có tool chạy lệnh hệ thống hoặc thao tác file trong bản hiện tại. Click/gõ chỉ được thực hiện sau xác nhận trong giao diện.
+Memory dùng `%LOCALAPPDATA%\CongSu\memory.sqlite3`. Tự động lưu chỉ áp dụng các câu có mẫu rõ ràng như “tôi thích ...”, “mình đang học ...”; chuỗi trông như mật khẩu, token, email hoặc số điện thoại bị bỏ qua. Dữ liệu memory được gửi kèm tới Ollama cục bộ khi có từ khóa liên quan.

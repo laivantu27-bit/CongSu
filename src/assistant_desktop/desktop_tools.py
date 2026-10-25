@@ -7,6 +7,16 @@ from typing import Any
 from urllib.parse import urlsplit
 
 MAX_TYPED_CHARACTERS = 500
+AUTO_APPROVED_TOOLS = frozenset(
+    {
+        "click",
+        "type_text",
+        "press_key",
+        "read_webpage",
+        "workspace_list",
+        "workspace_read",
+    }
+)
 APPLICATIONS = {
     "notepad": "notepad.exe",
     "calculator": "calc.exe",
@@ -123,14 +133,40 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_webpage",
+            "description": (
+                "Đọc nội dung văn bản từ trang web công khai http/https bằng "
+                "Playwright. Chỉ đọc; không click, gửi biểu mẫu hoặc đăng nhập."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"url": {"type": "string", "maxLength": 2048}},
+                "required": ["url"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
 def get_tool_definitions() -> list[dict[str, Any]]:
-    return TOOL_DEFINITIONS.copy()
+    from assistant_desktop.workspace_tools import WORKSPACE_TOOL_DEFINITIONS
+
+    return [*TOOL_DEFINITIONS, *WORKSPACE_TOOL_DEFINITIONS]
+
+
+def requires_user_approval(name: str) -> bool:
+    return name not in AUTO_APPROVED_TOOLS and name != "read_webpage"
 
 
 def describe_tool_call(name: str, arguments: dict[str, Any]) -> str:
+    if name.startswith("workspace_") or name == "run_allowed_command":
+        from assistant_desktop.workspace_tools import describe_workspace_tool
+
+        return describe_workspace_tool(name, arguments)
     validated = _validate_arguments(name, arguments)
     if name == "open_application":
         app_id = validated["app_id"]
@@ -150,10 +186,26 @@ def describe_tool_call(name: str, arguments: dict[str, Any]) -> str:
             "Để hỗ trợ tiếng Việt, nội dung sẽ tạm được đưa vào clipboard; "
             "clipboard văn bản cũ sẽ được khôi phục sau khi dán."
         )
+    if name == "read_webpage":
+        return f"Đọc nội dung trang web công khai: {validated['url']}"
     return f"Nhấn phím: {validated['key']}"
 
 
 def execute_tool(name: str, arguments: dict[str, Any]) -> str:
+    if name.startswith("workspace_") or name == "run_allowed_command":
+        from assistant_desktop.workspace_tools import (
+            execute_workspace_tool,
+            get_workspace_root,
+        )
+
+        root = get_workspace_root()
+        root.mkdir(parents=True, exist_ok=True)
+        return execute_workspace_tool(name, arguments, root)
+    if name == "read_webpage":
+        from assistant_desktop.browser_tools import read_webpage
+
+        validated = _validate_arguments(name, arguments)
+        return read_webpage(validated["url"])
     validated = _validate_arguments(name, arguments)
     if name == "open_application":
         app_id = validated["app_id"]
@@ -275,6 +327,12 @@ def _validate_arguments(
         if not isinstance(key, str) or key not in KEYS:
             raise DesktopToolError("Phím này không nằm trong danh sách cho phép.")
         return {"key": key}
+
+    if name == "read_webpage":
+        _check_keys(arguments, {"url"}, set())
+        from assistant_desktop.browser_tools import validate_public_http_url
+
+        return {"url": validate_public_http_url(arguments["url"])}
 
     raise DesktopToolError(f"Tool không được phép: {name}")
 

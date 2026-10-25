@@ -27,10 +27,17 @@ desktop = [
     "pyautogui>=0.9.54",
     "pyperclip>=1.9",
 ]
+browser = [
+    "playwright>=1.50",
+]
+mcp = [
+    "mcp>=1.9,<2",
+]
 test = []
 
 [project.scripts]
 desktop-assistant = "assistant_desktop.app:main"
+assistant-mcp = "assistant_desktop.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

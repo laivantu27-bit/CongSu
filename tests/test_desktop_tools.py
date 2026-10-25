@@ -7,6 +7,7 @@ from assistant_desktop.desktop_tools import (
     describe_tool_call,
     execute_tool,
     get_tool_definitions,
+    requires_user_approval,
 )
 
 
@@ -58,11 +59,39 @@ class DesktopToolValidationTests(unittest.TestCase):
 
     def test_tool_definitions_forbid_extra_arguments(self):
         definitions = get_tool_definitions()
-        self.assertEqual(len(definitions), 4)
+        self.assertEqual(len(definitions), 10)
         for definition in definitions:
             self.assertFalse(
                 definition["function"]["parameters"]["additionalProperties"]
             )
+
+    def test_confirmation_policy_preserves_sensitive_action_prompts(self):
+        self.assertFalse(requires_user_approval("click"))
+        self.assertFalse(requires_user_approval("workspace_read"))
+        self.assertTrue(requires_user_approval("workspace_write"))
+        self.assertTrue(requires_user_approval("workspace_delete"))
+        self.assertTrue(requires_user_approval("run_allowed_command"))
+        self.assertTrue(requires_user_approval("open_application"))
+
+    def test_browser_tool_accepts_public_http_url_only(self):
+        with patch(
+            "assistant_desktop.browser_tools.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("93.184.216.34", 0))],
+        ):
+            self.assertEqual(
+                describe_tool_call(
+                    "read_webpage", {"url": "https://example.com"}
+                ),
+                "Đọc nội dung trang web công khai: https://example.com",
+            )
+        with patch(
+            "assistant_desktop.browser_tools.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("127.0.0.1", 0))],
+        ):
+            with self.assertRaisesRegex(DesktopToolError, "mạng nội bộ"):
+                describe_tool_call(
+                    "read_webpage", {"url": "http://localhost"}
+                )
 
     @patch("assistant_desktop.desktop_tools._get_pyautogui")
     def test_click_uses_validated_screen_coordinates(self, get_pyautogui):
