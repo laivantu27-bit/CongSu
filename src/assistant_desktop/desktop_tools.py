@@ -15,6 +15,9 @@ AUTO_APPROVED_TOOLS = frozenset(
         "read_webpage",
         "workspace_list",
         "workspace_read",
+        "list_browser_tabs",
+        "read_page",
+        "wait_for_load",
     }
 )
 APPLICATIONS = {
@@ -217,10 +220,127 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
+def _browser_tool_definition(
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    required: list[str],
+) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+BROWSER_SESSION_TOOL_DEFINITIONS: list[dict[str, Any]] = [
+    _browser_tool_definition(
+        "open_browser",
+        "Mở URL công khai trong phiên Playwright và trả về tab_id.",
+        {"url": {"type": "string", "maxLength": 2048}},
+        ["url"],
+    ),
+    _browser_tool_definition(
+        "list_browser_tabs",
+        "Liệt kê các tab browser hiện đang mở.",
+        {},
+        [],
+    ),
+    _browser_tool_definition(
+        "read_page",
+        "Đọc nội dung và phần tử tương tác của tab browser.",
+        {"tab_id": {"type": "string"}},
+        ["tab_id"],
+    ),
+    _browser_tool_definition(
+        "navigate_browser",
+        "Điều hướng tab tới URL công khai http/https.",
+        {
+            "tab_id": {"type": "string"},
+            "url": {"type": "string", "maxLength": 2048},
+        },
+        ["tab_id", "url"],
+    ),
+    _browser_tool_definition(
+        "click_by_text",
+        "Click phần tử theo nội dung chính xác; không gửi biểu mẫu.",
+        {
+            "tab_id": {"type": "string"},
+            "text": {"type": "string", "minLength": 1, "maxLength": 500},
+        },
+        ["tab_id", "text"],
+    ),
+    _browser_tool_definition(
+        "click_selector",
+        "Click phần tử theo CSS selector; không gửi biểu mẫu.",
+        {
+            "tab_id": {"type": "string"},
+            "selector": {"type": "string", "minLength": 1, "maxLength": 500},
+        },
+        ["tab_id", "selector"],
+    ),
+    _browser_tool_definition(
+        "fill_form",
+        "Điền trường theo nhãn; không hỗ trợ thông tin đăng nhập hoặc gửi form.",
+        {
+            "tab_id": {"type": "string"},
+            "label": {"type": "string", "minLength": 1, "maxLength": 500},
+            "value": {"type": "string", "maxLength": 1000},
+        },
+        ["tab_id", "label", "value"],
+    ),
+    _browser_tool_definition(
+        "scroll_page",
+        "Cuộn trang lên hoặc xuống tối đa 2.000 pixel.",
+        {
+            "tab_id": {"type": "string"},
+            "direction": {"type": "string", "enum": ["up", "down"]},
+            "amount": {"type": "integer", "minimum": 1, "maximum": 2000},
+        },
+        ["tab_id", "direction", "amount"],
+    ),
+    _browser_tool_definition(
+        "wait_for_load",
+        "Chờ một trạng thái tải trang Playwright với thời hạn giới hạn.",
+        {
+            "tab_id": {"type": "string"},
+            "state": {
+                "type": "string",
+                "enum": ["domcontentloaded", "load", "networkidle"],
+            },
+            "timeout_ms": {
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 15000,
+            },
+        },
+        ["tab_id", "state"],
+    ),
+    _browser_tool_definition(
+        "close_browser_tab",
+        "Đóng một tab browser theo tab_id.",
+        {"tab_id": {"type": "string"}},
+        ["tab_id"],
+    ),
+]
+
+
 def get_tool_definitions() -> list[dict[str, Any]]:
     from assistant_desktop.workspace_tools import WORKSPACE_TOOL_DEFINITIONS
 
-    return [*TOOL_DEFINITIONS, *WORKSPACE_TOOL_DEFINITIONS]
+    return [
+        *TOOL_DEFINITIONS,
+        *BROWSER_SESSION_TOOL_DEFINITIONS,
+        *WORKSPACE_TOOL_DEFINITIONS,
+    ]
 
 
 def requires_user_approval(name: str) -> bool:
@@ -239,6 +359,10 @@ def describe_tool_call(name: str, arguments: dict[str, Any]) -> str:
         return describe_browser_automation(
             arguments["url"], arguments["actions"]
         )
+    if name in {item["function"]["name"] for item in BROWSER_SESSION_TOOL_DEFINITIONS}:
+        from assistant_desktop.browser_tools import describe_browser_session_tool
+
+        return describe_browser_session_tool(name, arguments)
     validated = _validate_arguments(name, arguments)
     if name == "open_application":
         app_id = validated["app_id"]
@@ -283,6 +407,10 @@ def execute_tool(name: str, arguments: dict[str, Any]) -> str:
 
         validated = _validate_arguments(name, arguments)
         return automate_webpage(validated["url"], validated["actions"])
+    if name in {item["function"]["name"] for item in BROWSER_SESSION_TOOL_DEFINITIONS}:
+        from assistant_desktop.browser_tools import execute_browser_session_tool
+
+        return execute_browser_session_tool(name, arguments)
     validated = _validate_arguments(name, arguments)
     if name == "open_application":
         app_id = validated["app_id"]

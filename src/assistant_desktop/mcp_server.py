@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import sys
 
-from assistant_desktop.browser_tools import automate_webpage, read_webpage
+from assistant_desktop.browser_tools import (
+    automate_webpage,
+    describe_browser_session_tool,
+    execute_browser_session_tool,
+    read_webpage,
+)
 from assistant_desktop.desktop_tools import DesktopToolError, describe_tool_call
 from assistant_desktop.memory import MemoryStore
 from assistant_desktop.workspace_tools import (
@@ -29,6 +34,20 @@ def create_server():
     root = get_workspace_root()
     root.mkdir(parents=True, exist_ok=True)
     memory = MemoryStore()
+
+    def run_browser_tool(name: str, arguments: dict[str, object]) -> str:
+        if name not in {
+            "list_browser_tabs",
+            "read_page",
+            "wait_for_load",
+        } and not mcp_permission_enabled("browser_automation"):
+            raise DesktopToolError(
+                "MCP browser automation đang tắt. Bật "
+                "ASSISTANT_MCP_ALLOW_BROWSER_AUTOMATION sau khi cấu hình "
+                "xác nhận cho từng thao tác."
+            )
+        describe_browser_session_tool(name, arguments)
+        return execute_browser_session_tool(name, arguments)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     def workspace_list(path: str = ".") -> list[dict[str, str]]:
@@ -117,6 +136,73 @@ def create_server():
         )
         return automate_webpage(url, actions)
 
+    @server.tool(annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True))
+    def open_browser(url: str) -> str:
+        """Mở trang công khai trong phiên nhiều tab; yêu cầu quyền browser automation."""
+        return run_browser_tool("open_browser", {"url": url})
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
+    def list_browser_tabs() -> str:
+        """Liệt kê các tab Playwright đang mở."""
+        return run_browser_tool("list_browser_tabs", {})
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
+    def read_page(tab_id: str) -> str:
+        """Đọc nội dung tab cùng cảnh báo login/CAPTCHA."""
+        return run_browser_tool("read_page", {"tab_id": tab_id})
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True))
+    def navigate_browser(tab_id: str, url: str) -> str:
+        """Điều hướng tab tới URL công khai; yêu cầu quyền browser automation."""
+        return run_browser_tool(
+            "navigate_browser", {"tab_id": tab_id, "url": url}
+        )
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True))
+    def click_by_text(tab_id: str, text: str) -> str:
+        """Click nội dung chính xác, không gửi form; yêu cầu quyền browser automation."""
+        return run_browser_tool(
+            "click_by_text", {"tab_id": tab_id, "text": text}
+        )
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True))
+    def click_selector(tab_id: str, selector: str) -> str:
+        """Click CSS selector, không gửi form; yêu cầu quyền browser automation."""
+        return run_browser_tool(
+            "click_selector", {"tab_id": tab_id, "selector": selector}
+        )
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True))
+    def fill_form(tab_id: str, label: str, value: str) -> str:
+        """Điền trường không nhạy cảm; không hỗ trợ login hoặc gửi form."""
+        return run_browser_tool(
+            "fill_form",
+            {"tab_id": tab_id, "label": label, "value": value},
+        )
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True))
+    def scroll_page(tab_id: str, direction: str, amount: int) -> str:
+        """Cuộn trang tối đa 2.000 pixel; yêu cầu quyền browser automation."""
+        return run_browser_tool(
+            "scroll_page",
+            {"tab_id": tab_id, "direction": direction, "amount": amount},
+        )
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
+    def wait_for_load(
+        tab_id: str, state: str, timeout_ms: int = 15000
+    ) -> str:
+        """Chờ trang tải với timeout tối đa 15 giây."""
+        return run_browser_tool(
+            "wait_for_load",
+            {"tab_id": tab_id, "state": state, "timeout_ms": timeout_ms},
+        )
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True))
+    def close_browser_tab(tab_id: str) -> str:
+        """Đóng tab Playwright; yêu cầu quyền browser automation."""
+        return run_browser_tool("close_browser_tab", {"tab_id": tab_id})
+
     @server.tool(annotations=ToolAnnotations(destructiveHint=True))
     def allowed_command(command_id: str) -> str:
         """Chạy tác vụ allowlist; yêu cầu ASSISTANT_MCP_ALLOW_SYSTEM_COMMANDS bật."""
@@ -180,7 +266,10 @@ def create_server():
         return (
             "# CongSu Assistant tools\n"
             "- Workspace: list/read/search; mkdir/copy/move/write/delete trong workspace.\n"
-            "- Browser: public HTTP(S) read; automation cần bật quyền.\n"
+            "- Browser: 10-tab Playwright session; public HTTP(S), chỉ GET/HEAD; "
+            "đọc, điều hướng, click text/CSS, điền trường an toàn, cuộn, chờ tải.\n"
+            "- Browser không gửi form, không đăng nhập hoặc giải CAPTCHA; "
+            "automation cần bật quyền và xác nhận.\n"
             "- Memory: search/list; write/delete/clear cần quyền riêng.\n"
             "- Commands: version, tests, compile và Git status allowlist; không có shell tùy ý.\n"
             "- Quyền ghi/xóa file, memory, browser automation, system commands bị khóa mặc định.\n"
@@ -197,7 +286,9 @@ def create_server():
             "Dùng tool đúng theo yêu cầu người dùng. Đọc trước khi sửa; trình bày "
             "đường dẫn, nội dung và tác động cụ thể trước thao tác thay đổi. "
             "Không thử lệnh shell tùy ý, không vượt workspace, không gửi biểu mẫu "
-            "web hoặc dữ liệu nhạy cảm. Yêu cầu client xác nhận mọi thao tác "
+            "web hoặc dữ liệu nhạy cảm. Dùng tab_id được trả về cho browser; "
+            "không đăng nhập, không xử lý CAPTCHA và không click nút submit. "
+            "Yêu cầu client xác nhận mọi thao tác "
             "ghi/xóa, browser automation và lệnh hệ thống."
         )
 
