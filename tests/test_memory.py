@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +17,19 @@ class MemoryStoreTests(unittest.TestCase):
             self.assertEqual(store.recall("Bạn thích món phở gì?"), saved)
             self.assertEqual(store.recall("Bạn nhớ điều gì về tôi?"), saved)
             self.assertEqual(store.list_memories(), saved)
+
+    def test_explicit_memory_requests_are_saved_and_individually_deletable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = MemoryStore(Path(directory) / "memory.sqlite3")
+
+            saved = store.remember_user_message(
+                "Hãy nhớ rằng tôi đang học tiếng Nhật."
+            )
+
+            self.assertEqual(saved, ["explicit: tôi đang học tiếng Nhật"])
+            self.assertTrue(store.delete(saved[0]))
+            self.assertFalse(store.delete(saved[0]))
+            self.assertEqual(store.list_memories(), [])
 
     def test_does_not_store_sensitive_messages(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -65,6 +79,10 @@ class MemoryStoreTests(unittest.TestCase):
             )
             self.assertEqual(reopened_store.clear_conversations(), 1)
             self.assertEqual(reopened_store.list_conversations(), [])
+            with self.assertRaises(sqlite3.IntegrityError):
+                reopened_store.save_conversation_message(
+                    conversation_id, "user", "Tin nhắn mồ côi"
+                )
 
 
 if __name__ == "__main__":

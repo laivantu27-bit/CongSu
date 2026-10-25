@@ -10,6 +10,14 @@ from uuid import uuid4
 
 _FACT_PATTERNS = (
     (
+        "explicit",
+        re.compile(
+            r"\b(?:hãy nhớ|nhớ giúp tôi|nhớ giúp mình|ghi nhớ)\s+"
+            r"(?:rằng\s+)?([^.!?\r\n]{2,200})",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "preference",
         re.compile(
             r"\b(?:tôi|mình)\s+(?:thích|yêu thích|ưa thích|quan tâm đến)\s+"
@@ -183,23 +191,33 @@ class MemoryStore:
             return []
 
         saved: list[str] = []
+        matched_facts = [
+            (category, match)
+            for category, pattern in _FACT_PATTERNS
+            for match in pattern.finditer(message)
+        ]
+        if any(category == "explicit" for category, _ in matched_facts):
+            matched_facts = [
+                (category, match)
+                for category, match in matched_facts
+                if category == "explicit"
+            ]
         with self._connect() as connection:
-            for category, pattern in _FACT_PATTERNS:
-                for match in pattern.finditer(message):
-                    detail = " ".join(match.group(1).split()).strip()
-                    if len(detail) < 2:
-                        continue
-                    fact = f"{category}: {detail}"
-                    connection.execute(
-                        """
-                        INSERT INTO memories (category, fact)
-                        VALUES (?, ?)
-                        ON CONFLICT(fact) DO UPDATE SET
-                            created_at = CURRENT_TIMESTAMP
-                        """,
-                        (category, fact),
-                    )
-                    saved.append(fact)
+            for category, match in matched_facts:
+                detail = " ".join(match.group(1).split()).strip()
+                if len(detail) < 2:
+                    continue
+                fact = f"{category}: {detail}"
+                connection.execute(
+                    """
+                    INSERT INTO memories (category, fact)
+                    VALUES (?, ?)
+                    ON CONFLICT(fact) DO UPDATE SET
+                        created_at = CURRENT_TIMESTAMP
+                    """,
+                    (category, fact),
+                )
+                saved.append(fact)
         return saved
 
     def add(self, fact: str) -> None:
@@ -254,6 +272,14 @@ class MemoryStore:
                 (limit,),
             ).fetchall()
         return [fact for (fact,) in rows]
+
+    def delete(self, fact: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM memories WHERE fact = ?",
+                (fact,),
+            )
+            return cursor.rowcount > 0
 
     def clear(self) -> int:
         with self._connect() as connection:

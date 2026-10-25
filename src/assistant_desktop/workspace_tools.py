@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -9,10 +10,15 @@ from assistant_desktop.desktop_tools import DesktopToolError
 
 DEFAULT_WORKSPACE_ROOT = Path(r"C:\CongSu\workspace")
 MAX_FILE_BYTES = 1_000_000
+MAX_SEARCH_FILES = 2_000
+MAX_SEARCH_MATCHES = 100
 ALLOWED_COMMANDS: dict[str, tuple[str, ...]] = {
     "python_version": ("python", "--version"),
     "git_version": ("git", "--version"),
     "ollama_version": ("ollama", "--version"),
+    "workspace_tests": ("python", "-m", "unittest", "discover", "-s", "tests"),
+    "workspace_compile": ("python", "-m", "compileall", "-q", "src"),
+    "workspace_git_status": ("git", "status", "--short", "--branch"),
 }
 
 WORKSPACE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
@@ -38,6 +44,67 @@ WORKSPACE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
                 "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_search",
+            "description": "Tìm văn bản trong các tệp UTF-8 bên trong workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "path": {"type": "string"},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_mkdir",
+            "description": "Tạo thư mục bên trong workspace; cần xác nhận.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_copy",
+            "description": "Sao chép một tệp trong workspace; không ghi đè tệp đích.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "destination": {"type": "string"},
+                },
+                "required": ["source", "destination"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_move",
+            "description": "Di chuyển hoặc đổi tên một tệp trong workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "destination": {"type": "string"},
+                },
+                "required": ["source", "destination"],
                 "additionalProperties": False,
             },
         },
@@ -76,8 +143,8 @@ WORKSPACE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "run_allowed_command",
             "description": (
-                "Chạy một lệnh chỉ-đọc cố định để xem phiên bản Python, Git "
-                "hoặc Ollama. Không nhận lệnh hay đối số tùy ý."
+                "Chạy tác vụ cố định: phiên bản runtime, test Python, biên dịch "
+                "kiểm tra hoặc trạng thái Git workspace. Không nhận lệnh tùy ý."
             ),
             "parameters": {
                 "type": "object",
@@ -133,6 +200,112 @@ def list_workspace(root: str | Path, relative_path: str = ".") -> list[dict[str,
     ]
 
 
+def search_workspace(
+    root: str | Path, query: str, relative_path: str = "."
+) -> list[dict[str, str | int]]:
+    if not isinstance(query, str) or not query.strip() or len(query) > 200:
+        raise DesktopToolError("Từ khóa tìm kiếm phải có từ 1 đến 200 ký tự.")
+    start = resolve_workspace_path(root, relative_path, allow_root=True)
+    if not start.is_dir():
+        raise DesktopToolError("Đường dẫn tìm kiếm không phải thư mục.")
+    matches: list[dict[str, str | int]] = []
+    visited = 0
+    for directory, subdirectories, filenames in os.walk(start, followlinks=False):
+        subdirectories[:] = [
+            name
+            for name in subdirectories
+            if not (Path(directory) / name).is_symlink()
+        ]
+        for filename in filenames:
+            file_path = Path(directory) / filename
+            visited += 1
+            if visited > MAX_SEARCH_FILES:
+                matches.append(
+                    {
+                        "path": "",
+                        "line": 0,
+                        "text": "Dừng ở giới hạn 2.000 tệp; kết quả có thể chưa đầy đủ.",
+                    }
+                )
+                return matches
+            try:
+                if file_path.is_symlink() or file_path.stat().st_size > MAX_FILE_BYTES:
+                    continue
+                content = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for line_number, line in enumerate(content.splitlines(), 1):
+                if query.casefold() in line.casefold():
+                    matches.append(
+                        {
+                            "path": str(file_path.relative_to(Path(root).resolve())),
+                            "line": line_number,
+                            "text": line[:500],
+                        }
+                    )
+                    if len(matches) >= MAX_SEARCH_MATCHES:
+                        matches.append(
+                            {
+                                "path": "",
+                                "line": 0,
+                                "text": "Đạt giới hạn 100 kết quả.",
+                            }
+                        )
+                        return matches
+    return matches
+
+
+def create_workspace_directory(root: str | Path, relative_path: str) -> str:
+    directory = resolve_workspace_path(root, relative_path)
+    if directory.exists() and not directory.is_dir():
+        raise DesktopToolError("Đường dẫn đã tồn tại nhưng không phải thư mục.")
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise DesktopToolError(f"Không thể tạo thư mục: {error}") from error
+    return f"Đã tạo thư mục workspace: {directory.name}."
+
+
+def copy_workspace_file(
+    root: str | Path, source: str, destination: str
+) -> str:
+    source_path = resolve_workspace_path(root, source)
+    destination_path = resolve_workspace_path(root, destination)
+    if not source_path.is_file() or source_path.is_symlink():
+        raise DesktopToolError("Chỉ có thể sao chép tệp thường trong workspace.")
+    if source_path.stat().st_size > MAX_FILE_BYTES:
+        raise DesktopToolError("Tệp nguồn vượt quá giới hạn 1 MB.")
+    if destination_path.exists():
+        raise DesktopToolError("Tệp đích đã tồn tại; không ghi đè.")
+    if not destination_path.parent.is_dir():
+        raise DesktopToolError("Thư mục đích không tồn tại.")
+    try:
+        shutil.copy2(source_path, destination_path)
+    except OSError as error:
+        raise DesktopToolError(f"Không thể sao chép tệp: {error}") from error
+    return f"Đã sao chép {source_path.name} thành {destination_path.name}."
+
+
+def move_workspace_file(
+    root: str | Path, source: str, destination: str
+) -> str:
+    source_path = resolve_workspace_path(root, source)
+    destination_path = resolve_workspace_path(root, destination)
+    if not source_path.is_file() or source_path.is_symlink():
+        raise DesktopToolError("Chỉ có thể di chuyển tệp thường trong workspace.")
+    if source_path.stat().st_size > MAX_FILE_BYTES:
+        raise DesktopToolError("Tệp nguồn vượt quá giới hạn 1 MB.")
+    if destination_path.exists():
+        raise DesktopToolError("Tệp đích đã tồn tại; không ghi đè.")
+    if not destination_path.parent.is_dir():
+        raise DesktopToolError("Thư mục đích không tồn tại.")
+    try:
+        source_path.rename(destination_path)
+    except OSError as error:
+        raise DesktopToolError(f"Không thể di chuyển tệp: {error}") from error
+    return f"Đã di chuyển {source_path.name} thành {destination_path.name}."
+
+
 def read_workspace_file(root: str | Path, relative_path: str) -> str:
     file_path = resolve_workspace_path(root, relative_path)
     if not file_path.is_file():
@@ -180,17 +353,28 @@ def delete_workspace_file(root: str | Path, relative_path: str) -> str:
 
 
 def run_allowed_command(command_id: str) -> str:
-    command = ALLOWED_COMMANDS.get(command_id)
-    if command is None:
+    command_args = ALLOWED_COMMANDS.get(command_id)
+    if command_args is None:
         raise DesktopToolError("Lệnh không nằm trong danh sách cho phép.")
+    if command_id in {"workspace_tests", "workspace_compile"}:
+        executable = os.sys.executable
+        arguments = (executable, *command_args[1:])
+        working_directory = get_workspace_root()
+    elif command_id == "workspace_git_status":
+        arguments = ("git", "-C", str(get_workspace_root()), "status", "--short", "--branch")
+        working_directory = None
+    else:
+        arguments = command_args
+        working_directory = None
     try:
         result = subprocess.run(
-            command,
+            arguments,
             check=False,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120 if command_id in {"workspace_tests", "workspace_compile"} else 10,
             shell=False,
+            cwd=working_directory,
             env={**os.environ, "NO_COLOR": "1"},
         )
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -208,6 +392,10 @@ def validate_workspace_tool(name: str, arguments: dict[str, Any]) -> dict[str, A
         raise DesktopToolError("Tham số tool phải là object.")
     allowed = {
         "workspace_list": (set(), {"path"}),
+        "workspace_search": ({"query"}, {"path"}),
+        "workspace_mkdir": ({"path"}, set()),
+        "workspace_copy": ({"source", "destination"}, set()),
+        "workspace_move": ({"source", "destination"}, set()),
         "workspace_read": ({"path"}, set()),
         "workspace_write": ({"path", "content"}, set()),
         "workspace_delete": ({"path"}, set()),
@@ -234,6 +422,12 @@ def validate_workspace_tool(name: str, arguments: dict[str, Any]) -> dict[str, A
             raise DesktopToolError("Nội dung phải là văn bản UTF-8 hợp lệ.") from error
         if content_size > MAX_FILE_BYTES:
             raise DesktopToolError("Tệp vượt quá giới hạn ghi 1 MB.")
+    if name == "workspace_search" and len(arguments["query"]) > 200:
+        raise DesktopToolError("Từ khóa tìm kiếm không được vượt quá 200 ký tự.")
+    if name in {"workspace_copy", "workspace_move"} and (
+        arguments["source"] == arguments["destination"]
+    ):
+        raise DesktopToolError("Nguồn và đích phải khác nhau.")
     return arguments.copy()
 
 
@@ -249,6 +443,23 @@ def describe_workspace_tool(name: str, arguments: dict[str, Any]) -> str:
         )
     if name == "workspace_delete":
         return f"Xóa tệp {validated['path']} trong workspace."
+    if name == "workspace_mkdir":
+        return f"Tạo thư mục workspace: {validated['path']}."
+    if name == "workspace_copy":
+        return (
+            f"Sao chép tệp trong workspace: {validated['source']} -> "
+            f"{validated['destination']} (không ghi đè)."
+        )
+    if name == "workspace_move":
+        return (
+            f"Di chuyển tệp trong workspace: {validated['source']} -> "
+            f"{validated['destination']} (không ghi đè)."
+        )
+    if name == "workspace_search":
+        return (
+            f"Tìm chuỗi '{validated['query']}' trong thư mục "
+            f"{validated.get('path', '.')}."
+        )
     if name == "run_allowed_command":
         return (
             f"Chạy lệnh cố định {validated['command_id']}: "
@@ -270,6 +481,26 @@ def execute_workspace_tool(
             f"{item['type']}: {item['name']}"
             for item in list_workspace(root, validated["path"])
         ) or "(thư mục trống)"
+    if name == "workspace_search":
+        results = search_workspace(
+            root,
+            validated["query"],
+            validated.get("path", "."),
+        )
+        return "\n".join(
+            f"{item['path']}:{item['line']}: {item['text']}"
+            for item in results
+        ) or "Không tìm thấy nội dung khớp."
+    if name == "workspace_mkdir":
+        return create_workspace_directory(root, validated["path"])
+    if name == "workspace_copy":
+        return copy_workspace_file(
+            root, validated["source"], validated["destination"]
+        )
+    if name == "workspace_move":
+        return move_workspace_file(
+            root, validated["source"], validated["destination"]
+        )
     if name == "workspace_read":
         return read_workspace_file(root, validated["path"])
     if name == "workspace_write":
@@ -286,6 +517,7 @@ def mcp_permission_enabled(permission: str) -> bool:
         "file_write": "ASSISTANT_MCP_ALLOW_FILE_WRITE",
         "file_delete": "ASSISTANT_MCP_ALLOW_FILE_DELETE",
         "memory_write": "ASSISTANT_MCP_ALLOW_MEMORY_WRITE",
+        "memory_delete": "ASSISTANT_MCP_ALLOW_MEMORY_DELETE",
         "memory_clear": "ASSISTANT_MCP_ALLOW_MEMORY_CLEAR",
         "browser_automation": "ASSISTANT_MCP_ALLOW_BROWSER_AUTOMATION",
         "system_commands": "ASSISTANT_MCP_ALLOW_SYSTEM_COMMANDS",

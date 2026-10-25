@@ -43,17 +43,18 @@ MCP server dùng stdio và nên được cấu hình trực tiếp trong MCP cli
 $env:ASSISTANT_MCP_ALLOW_FILE_WRITE = "true"
 $env:ASSISTANT_MCP_ALLOW_FILE_DELETE = "true"
 $env:ASSISTANT_MCP_ALLOW_MEMORY_WRITE = "true"
+$env:ASSISTANT_MCP_ALLOW_MEMORY_DELETE = "true"
 $env:ASSISTANT_MCP_ALLOW_MEMORY_CLEAR = "true"
 $env:ASSISTANT_MCP_ALLOW_BROWSER_AUTOMATION = "true"
 $env:ASSISTANT_MCP_ALLOW_SYSTEM_COMMANDS = "true"
 assistant-mcp
 ```
 
-Chỉ bật từng quyền cần dùng; không bật các quyền thay đổi dữ liệu nếu MCP client không yêu cầu xác nhận cho từng lần gọi.
+Chỉ bật từng quyền cần dùng; không bật các quyền thay đổi dữ liệu nếu MCP client không yêu cầu xác nhận cho từng lần gọi. MCP cung cấp resource `assistant://capabilities` và prompt `safe_assistant` để client khám phá giới hạn và hướng dẫn sử dụng.
 
-Workspace mặc định là `C:\CongSu\workspace`. Có thể thay đổi bằng biến môi trường `ASSISTANT_WORKSPACE`. File tools chỉ thao tác bên trong thư mục này; chỉ đọc UTF-8; giới hạn 1 MB mỗi tệp; xóa chỉ áp dụng cho một file, không xóa thư mục.
+Workspace mặc định là `C:\CongSu\workspace`. Có thể thay đổi bằng biến môi trường `ASSISTANT_WORKSPACE`. File tools chỉ thao tác bên trong thư mục này; chỉ đọc UTF-8; giới hạn 1 MB mỗi tệp; có thể tìm kiếm nội dung, tạo thư mục, sao chép/di chuyển/ghi/xóa từng tệp. Sao chép/di chuyển không ghi đè tệp đích; xóa chỉ áp dụng cho một file, không xóa thư mục.
 
-Lệnh hệ thống chỉ gồm `python_version`, `git_version` và `ollama_version`, chạy bằng argv cố định, không qua shell và không nhận lệnh tùy ý.
+Tác vụ hệ thống gồm `python_version`, `git_version`, `ollama_version`, `workspace_tests`, `workspace_compile` và `workspace_git_status`. Chúng dùng argv cố định, chạy không qua shell; không nhận lệnh hoặc đối số tùy ý. Tác vụ workspace chạy trong workspace được cấu hình.
 
 Tải một voice tiếng Việt theo hướng dẫn [Piper Python API](https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/API_PYTHON.md), sau đó đặt `PIPER_VOICE` tới file `.onnx` của voice đó. Có thể cấu hình endpoint và model Ollama bằng biến môi trường:
 
@@ -72,11 +73,11 @@ py -m assistant_desktop
 - Agent trò chuyện đồng cảm bằng tiếng Việt, ghi chú một số sở thích/hoạt động được nhận diện từ lời người dùng vào SQLite cục bộ, và đưa ghi chú liên quan vào ngữ cảnh chat. Hội thoại user/assistant được lưu bền vững, có thể mở lại qua **Lịch sử**; **Xóa lịch sử** chỉ xóa hội thoại, không xóa memory. Nút **Xem memory** và **Xóa memory** quản lý memory riêng.
 - Agent có thể đề xuất mở Notepad, Calculator, Explorer hoặc Paint; click chuột; gõ tối đa 500 ký tự; và nhấn phím trong danh sách giới hạn.
 - Click chuột, gõ tối đa 500 ký tự và nhấn phím trong danh sách cho phép không cần xác nhận; chỉ thực hiện thao tác khi người dùng yêu cầu. Mở ứng dụng vẫn cần xác nhận riêng.
-- Playwright có thể đọc văn bản tối đa 12.000 ký tự từ trang công khai http/https; browser headless, không đăng nhập/tải tệp và chặn host nội bộ. Tool `browser_automate` có thể click theo nội dung chính xác, điền trường theo nhãn và nhấn phím allowlist; toàn bộ URL, hành động và nội dung điền được hiển thị trong hộp thoại xác nhận trước khi chạy. Mỗi phiên là context mới, không chia sẻ cookie; cần cài extra `browser` và Chromium.
-- Workspace tools liệt kê/đọc tệp; ghi đè và xóa tệp yêu cầu xác nhận trong ứng dụng. File access giới hạn trong `C:\CongSu\workspace` (hoặc `ASSISTANT_WORKSPACE`).
+- Playwright có thể đọc văn bản và snapshot các phần tử tương tác từ trang công khai http/https; browser headless, không đăng nhập/tải tệp, không gửi form và chặn host nội bộ. Tool `browser_automate` hỗ trợ click text/role, điền trường không nhạy cảm, chọn danh sách, checkbox và phím allowlist; toàn bộ URL/hành động/nội dung được hiển thị để xác nhận. Mỗi phiên là context mới, không chia sẻ cookie; cần cài extra `browser` và Chromium.
+- Workspace tools liệt kê/đọc/tìm kiếm, tạo thư mục, sao chép/di chuyển/ghi/xóa tệp; mọi thao tác thay đổi yêu cầu xác nhận trong ứng dụng. File access giới hạn trong `C:\CongSu\workspace` (hoặc `ASSISTANT_WORKSPACE`).
 - Tool orchestration kiểm tra toàn bộ kế hoạch trước khi chạy, dừng nếu có thao tác không hợp lệ; tối đa 5 tool call cho mỗi lượt.
-- Không chạy lệnh shell tùy ý. Chỉ có lệnh xem phiên bản Python, Git, Ollama trong allowlist; yêu cầu xác nhận trong ứng dụng.
-- MCP server stdio expose workspace, browser, memory và lệnh phiên bản allowlist. Các quyền thay đổi dữ liệu, browser automation và lệnh hệ thống đều bị khóa mặc định; chỉ mở riêng bằng biến môi trường nêu trên sau khi cấu hình xác nhận ở MCP client. Không mở server ra mạng.
+- Không chạy lệnh shell tùy ý. Chỉ có tác vụ version/test/compile/git-status trong allowlist; yêu cầu xác nhận trong ứng dụng.
+- MCP server stdio expose tools có annotation read-only/destructive, resource capabilities và prompt `safe_assistant`. Quyền thay đổi dữ liệu, browser automation và system commands bị khóa mặc định; chỉ mở riêng bằng biến môi trường sau khi cấu hình xác nhận ở MCP client. Không mở server ra mạng.
 - Gõ tiếng Việt tạm dùng clipboard Windows; nội dung văn bản trước đó được khôi phục sau thao tác.
 - PyAutoGUI fail-safe bật; đưa chuột lên góc trên-trái để hủy thao tác chuột/bàn phím.
 - Lần đầu chạy faster-whisper có thể cần tải model nhận dạng về máy.

@@ -5,12 +5,16 @@ from unittest.mock import patch
 
 from assistant_desktop.desktop_tools import DesktopToolError
 from assistant_desktop.workspace_tools import (
+    copy_workspace_file,
+    create_workspace_directory,
     delete_workspace_file,
     list_workspace,
+    move_workspace_file,
     read_workspace_file,
     resolve_workspace_path,
     mcp_permission_enabled,
     run_allowed_command,
+    search_workspace,
     validate_workspace_tool,
     write_workspace_file,
 )
@@ -22,6 +26,7 @@ class WorkspaceToolTests(unittest.TestCase):
             "file_write",
             "file_delete",
             "memory_write",
+            "memory_delete",
             "memory_clear",
             "browser_automation",
             "system_commands",
@@ -47,8 +52,30 @@ class WorkspaceToolTests(unittest.TestCase):
                 list_workspace(root),
                 [{"name": "notes.txt", "type": "file"}],
             )
+            self.assertEqual(
+                search_workspace(root, "chào"),
+                [{"path": "notes.txt", "line": 1, "text": "Xin chào"}],
+            )
             delete_workspace_file(root, "notes.txt")
             self.assertFalse((root / "notes.txt").exists())
+
+    def test_create_copy_and_move_files_within_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            create_workspace_directory(root, "notes")
+            (root / "notes" / "original.txt").write_text("nội dung", encoding="utf-8")
+
+            copy_workspace_file(root, "notes/original.txt", "notes/copy.txt")
+            move_workspace_file(root, "notes/copy.txt", "notes/renamed.txt")
+
+            self.assertEqual(
+                read_workspace_file(root, "notes/renamed.txt"),
+                "nội dung",
+            )
+            with self.assertRaises(DesktopToolError):
+                copy_workspace_file(
+                    root, "notes/original.txt", "notes/renamed.txt"
+                )
 
     def test_rejects_traversal_and_directory_deletion(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -95,6 +122,30 @@ class WorkspaceToolTests(unittest.TestCase):
         self.assertFalse(run.call_args.kwargs["shell"])
         with self.assertRaises(DesktopToolError):
             run_allowed_command("powershell")
+
+    def test_workspace_commands_use_the_configured_workspace_and_fixed_arguments(self):
+        completed = type(
+            "Completed",
+            (),
+            {"stdout": "Ran 2 tests", "stderr": "", "returncode": 0},
+        )()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(
+                "os.environ", {"ASSISTANT_WORKSPACE": directory}, clear=True
+            ):
+                with patch(
+                    "assistant_desktop.workspace_tools.subprocess.run",
+                    return_value=completed,
+                ) as run:
+                    self.assertEqual(
+                        run_allowed_command("workspace_tests"), "Ran 2 tests"
+                    )
+            self.assertEqual(
+                run.call_args.args[0][1:],
+                ("-m", "unittest", "discover", "-s", "tests"),
+            )
+            self.assertEqual(run.call_args.kwargs["cwd"], Path(directory))
+            self.assertFalse(run.call_args.kwargs["shell"])
 
 
 if __name__ == "__main__":

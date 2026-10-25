@@ -59,7 +59,9 @@ class DesktopToolValidationTests(unittest.TestCase):
 
     def test_tool_definitions_forbid_extra_arguments(self):
         definitions = get_tool_definitions()
-        self.assertEqual(len(definitions), 11)
+        self.assertEqual(len(definitions), 15)
+        names = [definition["function"]["name"] for definition in definitions]
+        self.assertEqual(len(names), len(set(names)))
         for definition in definitions:
             self.assertFalse(
                 definition["function"]["parameters"]["additionalProperties"]
@@ -104,6 +106,24 @@ class DesktopToolValidationTests(unittest.TestCase):
                     "https://example.com",
                     [{"type": "press_key", "key": "Alt+F4"}],
                 )
+            with self.assertRaises(DesktopToolError):
+                validate_browser_actions(
+                    "https://example.com",
+                    [{"type": "press_key", "key": "Enter"}],
+                )
+
+    def test_browser_automation_does_not_click_submit_controls(self):
+        from assistant_desktop.browser_tools import _click_without_form_submission
+
+        locator = Mock()
+        locator.evaluate.return_value = True
+        with self.assertRaisesRegex(DesktopToolError, "gửi biểu mẫu"):
+            _click_without_form_submission(locator)
+        locator.click.assert_not_called()
+
+        locator.evaluate.return_value = False
+        _click_without_form_submission(locator)
+        locator.click.assert_called_once()
 
     def test_browser_tool_accepts_public_http_url_only(self):
         with patch(

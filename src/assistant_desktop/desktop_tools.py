@@ -143,7 +143,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             ),
             "parameters": {
                 "type": "object",
-                "properties": {"url": {"type": "string", "maxLength": 2048}},
+                "properties": {
+                    "url": {"type": "string", "maxLength": 2048},
+                },
                 "required": ["url"],
                 "additionalProperties": False,
             },
@@ -170,15 +172,27 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                             "properties": {
                                 "type": {
                                     "type": "string",
-                                    "enum": ["click_text", "fill_label", "press_key"],
+                                    "enum": [
+                                        "click_text",
+                                        "click_role",
+                                        "fill_label",
+                                        "select_label",
+                                        "check_label",
+                                        "uncheck_label",
+                                        "press_key",
+                                    ],
                                 },
                                 "text": {"type": "string", "maxLength": 500},
                                 "label": {"type": "string", "maxLength": 500},
                                 "value": {"type": "string", "maxLength": 500},
+                                "role": {
+                                    "type": "string",
+                                    "enum": ["button", "link"],
+                                },
+                                "name": {"type": "string", "maxLength": 500},
                                 "key": {
                                     "type": "string",
                                     "enum": [
-                                        "Enter",
                                         "Tab",
                                         "Escape",
                                         "Backspace",
