@@ -82,6 +82,23 @@ class AgentWorkerTests(unittest.TestCase):
             )
         )
 
+    def test_model_context_is_bounded_and_keeps_one_system_prompt(self):
+        messages = [
+            {"role": "system", "content": "system prompt"},
+            *[
+                {"role": "user", "content": f"message {index}"}
+                for index in range(100)
+            ],
+        ]
+        worker = AgentWorker(FakeOllamaClient([]), messages)
+
+        context = worker._messages_for_model()
+
+        self.assertEqual(context[0], messages[0])
+        self.assertEqual(sum(item["role"] == "system" for item in context), 1)
+        self.assertEqual(len(context), 81)
+        self.assertEqual(context[1]["content"], "message 20")
+
     def test_invalid_tool_call_preflight_prevents_partial_execution(self):
         client = FakeOllamaClient(
             [
@@ -113,6 +130,45 @@ class AgentWorkerTests(unittest.TestCase):
             response = worker._run_agent()
 
         self.assertIn("không hợp lệ", response)
+        execute_tool.assert_not_called()
+
+    def test_denied_mixed_batch_does_not_execute_any_action(self):
+        client = FakeOllamaClient(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "click",
+                                "arguments": {"x": 10, "y": 20},
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "workspace_delete",
+                                "arguments": {"path": "notes.txt"},
+                            }
+                        },
+                    ],
+                }
+            ]
+        )
+        worker = AgentWorker(
+            client, [{"role": "user", "content": "Dọn ghi chú"}]
+        )
+        requests = []
+        worker.approval_requested.connect(
+            lambda request: (requests.append(request), request.resolve(False))
+        )
+
+        with patch("assistant_desktop.agent.execute_tool") as execute_tool:
+            response = worker._run_agent()
+
+        self.assertIn("chưa được xác nhận", response)
+        self.assertEqual(len(requests), 1)
+        self.assertIn("Xóa tệp notes.txt", requests[0].description)
         execute_tool.assert_not_called()
 
     def test_approved_tool_runs_then_model_returns_reply(self):
@@ -180,7 +236,7 @@ class AgentWorkerTests(unittest.TestCase):
         with patch("assistant_desktop.agent.execute_tool") as execute_tool:
             response = worker._run_agent()
 
-        self.assertIn("không có xác nhận", response)
+        self.assertIn("chưa được xác nhận", response)
         execute_tool.assert_not_called()
         self.assertEqual(worker._messages[-2]["role"], "tool")
 

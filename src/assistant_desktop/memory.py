@@ -6,6 +6,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from uuid import uuid4
 
 _FACT_PATTERNS = (
     (
@@ -54,6 +55,128 @@ class MemoryStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversation_messages (
+                    id INTEGER PRIMARY KEY,
+                    conversation_id TEXT NOT NULL
+                        REFERENCES conversations(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS conversation_messages_by_time
+                ON conversation_messages(conversation_id, id)
+                """
+            )
+
+    def create_conversation(self, title: str = "Cuộc trò chuyện mới") -> str:
+        conversation_id = uuid4().hex
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO conversations (id, title, created_at, updated_at)
+                VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now'),
+                           strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                """,
+                (conversation_id, title[:100]),
+            )
+        return conversation_id
+
+    def save_conversation_message(
+        self, conversation_id: str, role: str, content: str
+    ) -> None:
+        if role not in {"user", "assistant"}:
+            raise ValueError("Chỉ lưu được tin nhắn user hoặc assistant.")
+        if len(content) > 100_000:
+            raise ValueError("Tin nhắn vượt quá giới hạn lưu 100.000 ký tự.")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO conversation_messages (conversation_id, role, content)
+                VALUES (?, ?, ?)
+                """,
+                (conversation_id, role, content),
+            )
+            if role == "user":
+                title = " ".join(content.split())[:100] or "Cuộc trò chuyện mới"
+                connection.execute(
+                    """
+                    UPDATE conversations
+                    SET title = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+                    WHERE id = ? AND NOT EXISTS (
+                        SELECT 1 FROM conversation_messages
+                        WHERE conversation_id = ? AND id < ?
+                    )
+                    """,
+                    (title, conversation_id, conversation_id, cursor.lastrowid),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE conversations
+                    SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+                    WHERE id = ?
+                    """,
+                    (conversation_id,),
+                )
+
+    def list_conversations(self, limit: int = 50) -> list[dict[str, str]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, title, updated_at FROM conversations
+                ORDER BY updated_at DESC, id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {"id": row[0], "title": row[1], "updated_at": row[2]}
+            for row in rows
+        ]
+
+    def load_conversation(
+        self, conversation_id: str, limit: int | None = None
+    ) -> list[dict[str, str]]:
+        if limit is None:
+            query = """
+                SELECT role, content FROM conversation_messages
+                WHERE conversation_id = ?
+                ORDER BY id
+            """
+            parameters: tuple[str | int, ...] = (conversation_id,)
+        else:
+            query = """
+                SELECT role, content FROM conversation_messages
+                WHERE conversation_id = ?
+                ORDER BY id DESC LIMIT ?
+            """
+            parameters = (conversation_id, limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        if limit is not None:
+            rows.reverse()
+        return [{"role": role, "content": content} for role, content in rows]
+
+    def clear_conversations(self) -> int:
+        with self._connect() as connection:
+            connection.execute("DELETE FROM conversation_messages")
+            cursor = connection.execute("DELETE FROM conversations")
+            return cursor.rowcount
 
     def remember_user_message(self, message: str) -> list[str]:
         if _SENSITIVE_CONTENT.search(message):
@@ -140,6 +263,7 @@ class MemoryStore:
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=5.0)
+        connection.execute("PRAGMA foreign_keys = ON")
         try:
             with connection:
                 yield connection

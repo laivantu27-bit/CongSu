@@ -59,7 +59,7 @@ class DesktopToolValidationTests(unittest.TestCase):
 
     def test_tool_definitions_forbid_extra_arguments(self):
         definitions = get_tool_definitions()
-        self.assertEqual(len(definitions), 10)
+        self.assertEqual(len(definitions), 11)
         for definition in definitions:
             self.assertFalse(
                 definition["function"]["parameters"]["additionalProperties"]
@@ -72,6 +72,38 @@ class DesktopToolValidationTests(unittest.TestCase):
         self.assertTrue(requires_user_approval("workspace_delete"))
         self.assertTrue(requires_user_approval("run_allowed_command"))
         self.assertTrue(requires_user_approval("open_application"))
+        self.assertTrue(requires_user_approval("browser_automate"))
+
+    def test_browser_automation_requires_validated_confirmable_actions(self):
+        from assistant_desktop.browser_tools import validate_browser_actions
+
+        with patch(
+            "assistant_desktop.browser_tools.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("93.184.216.34", 0))],
+        ):
+            url, actions = validate_browser_actions(
+                "https://example.com",
+                [
+                    {"type": "fill_label", "label": "Email", "value": "test"},
+                    {"type": "click_text", "text": "Continue"},
+                ],
+            )
+            self.assertEqual(url, "https://example.com")
+            self.assertEqual(len(actions), 2)
+            describe_tool_call(
+                "browser_automate",
+                {
+                    "url": url,
+                    "actions": [
+                        {"type": "click_text", "text": "Continue"}
+                    ],
+                },
+            )
+            with self.assertRaises(DesktopToolError):
+                validate_browser_actions(
+                    "https://example.com",
+                    [{"type": "press_key", "key": "Alt+F4"}],
+                )
 
     def test_browser_tool_accepts_public_http_url_only(self):
         with patch(

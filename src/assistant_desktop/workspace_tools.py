@@ -240,11 +240,20 @@ def validate_workspace_tool(name: str, arguments: dict[str, Any]) -> dict[str, A
 def describe_workspace_tool(name: str, arguments: dict[str, Any]) -> str:
     validated = validate_workspace_tool(name, arguments)
     if name == "workspace_write":
-        return f"Ghi tệp {validated['path']} trong workspace."
+        content = validated["content"]
+        return (
+            f"Ghi tệp workspace: {validated['path']}\n"
+            f"Kích thước: {len(content.encode('utf-8'))} byte\n"
+            "Nội dung chính xác sẽ được hiển thị trong hộp thoại xác nhận:\n\n"
+            + content
+        )
     if name == "workspace_delete":
         return f"Xóa tệp {validated['path']} trong workspace."
     if name == "run_allowed_command":
-        return f"Chạy lệnh cố định: {validated['command_id']}."
+        return (
+            f"Chạy lệnh cố định {validated['command_id']}: "
+            + " ".join(ALLOWED_COMMANDS[validated["command_id"]])
+        )
     if name == "workspace_read":
         return f"Đọc tệp {validated['path']} trong workspace."
     return f"Liệt kê thư mục {validated['path']} trong workspace."
@@ -270,3 +279,17 @@ def execute_workspace_tool(
     if name == "run_allowed_command":
         return run_allowed_command(validated["command_id"])
     raise DesktopToolError(f"Tool không được phép: {name}")
+
+
+def mcp_permission_enabled(permission: str) -> bool:
+    env_var = {
+        "file_write": "ASSISTANT_MCP_ALLOW_FILE_WRITE",
+        "file_delete": "ASSISTANT_MCP_ALLOW_FILE_DELETE",
+        "memory_write": "ASSISTANT_MCP_ALLOW_MEMORY_WRITE",
+        "memory_clear": "ASSISTANT_MCP_ALLOW_MEMORY_CLEAR",
+        "browser_automation": "ASSISTANT_MCP_ALLOW_BROWSER_AUTOMATION",
+        "system_commands": "ASSISTANT_MCP_ALLOW_SYSTEM_COMMANDS",
+    }.get(permission)
+    if env_var is None:
+        raise DesktopToolError("Quyền MCP không hợp lệ.")
+    return os.environ.get(env_var, "").casefold() in {"1", "true", "yes"}

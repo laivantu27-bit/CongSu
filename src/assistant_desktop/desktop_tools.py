@@ -149,6 +149,57 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_automate",
+            "description": (
+                "Mở trang công khai rồi click theo nội dung chính xác, điền "
+                "trường theo nhãn hoặc nhấn phím cho phép. Tối đa 8 hành động; "
+                "mọi lần gọi cần người dùng xác nhận. Không đăng nhập hoặc tải tệp."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "maxLength": 2048},
+                    "actions": {
+                        "type": "array",
+                        "maxItems": 8,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["click_text", "fill_label", "press_key"],
+                                },
+                                "text": {"type": "string", "maxLength": 500},
+                                "label": {"type": "string", "maxLength": 500},
+                                "value": {"type": "string", "maxLength": 500},
+                                "key": {
+                                    "type": "string",
+                                    "enum": [
+                                        "Enter",
+                                        "Tab",
+                                        "Escape",
+                                        "Backspace",
+                                        "Delete",
+                                        "ArrowUp",
+                                        "ArrowDown",
+                                        "ArrowLeft",
+                                        "ArrowRight",
+                                    ],
+                                },
+                            },
+                            "required": ["type"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["url", "actions"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -159,7 +210,7 @@ def get_tool_definitions() -> list[dict[str, Any]]:
 
 
 def requires_user_approval(name: str) -> bool:
-    return name not in AUTO_APPROVED_TOOLS and name != "read_webpage"
+    return name not in AUTO_APPROVED_TOOLS
 
 
 def describe_tool_call(name: str, arguments: dict[str, Any]) -> str:
@@ -167,6 +218,13 @@ def describe_tool_call(name: str, arguments: dict[str, Any]) -> str:
         from assistant_desktop.workspace_tools import describe_workspace_tool
 
         return describe_workspace_tool(name, arguments)
+    if name == "browser_automate":
+        from assistant_desktop.browser_tools import describe_browser_automation
+
+        _check_keys(arguments, {"url", "actions"}, set())
+        return describe_browser_automation(
+            arguments["url"], arguments["actions"]
+        )
     validated = _validate_arguments(name, arguments)
     if name == "open_application":
         app_id = validated["app_id"]
@@ -206,6 +264,11 @@ def execute_tool(name: str, arguments: dict[str, Any]) -> str:
 
         validated = _validate_arguments(name, arguments)
         return read_webpage(validated["url"])
+    if name == "browser_automate":
+        from assistant_desktop.browser_tools import automate_webpage
+
+        validated = _validate_arguments(name, arguments)
+        return automate_webpage(validated["url"], validated["actions"])
     validated = _validate_arguments(name, arguments)
     if name == "open_application":
         app_id = validated["app_id"]
@@ -333,6 +396,15 @@ def _validate_arguments(
         from assistant_desktop.browser_tools import validate_public_http_url
 
         return {"url": validate_public_http_url(arguments["url"])}
+
+    if name == "browser_automate":
+        _check_keys(arguments, {"url", "actions"}, set())
+        from assistant_desktop.browser_tools import validate_browser_actions
+
+        url, actions = validate_browser_actions(
+            arguments["url"], arguments["actions"]
+        )
+        return {"url": url, "actions": actions}
 
     raise DesktopToolError(f"Tool không được phép: {name}")
 

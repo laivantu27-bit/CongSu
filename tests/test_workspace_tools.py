@@ -9,6 +9,7 @@ from assistant_desktop.workspace_tools import (
     list_workspace,
     read_workspace_file,
     resolve_workspace_path,
+    mcp_permission_enabled,
     run_allowed_command,
     validate_workspace_tool,
     write_workspace_file,
@@ -16,6 +17,26 @@ from assistant_desktop.workspace_tools import (
 
 
 class WorkspaceToolTests(unittest.TestCase):
+    def test_mcp_mutation_permissions_default_to_disabled(self):
+        for permission in (
+            "file_write",
+            "file_delete",
+            "memory_write",
+            "memory_clear",
+            "browser_automation",
+            "system_commands",
+        ):
+            with self.subTest(permission=permission):
+                with patch.dict("os.environ", {}, clear=True):
+                    self.assertFalse(mcp_permission_enabled(permission))
+
+        with patch.dict(
+            "os.environ",
+            {"ASSISTANT_MCP_ALLOW_FILE_WRITE": "true"},
+            clear=True,
+        ):
+            self.assertTrue(mcp_permission_enabled("file_write"))
+
     def test_read_write_list_and_delete_are_confined_to_workspace(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

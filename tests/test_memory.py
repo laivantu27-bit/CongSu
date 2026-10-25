@@ -39,6 +39,33 @@ class MemoryStoreTests(unittest.TestCase):
             self.assertEqual(store.clear(), 1)
             self.assertEqual(store.list_memories(), [])
 
+    def test_conversation_history_persists_and_can_be_cleared(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "memory.sqlite3"
+            store = MemoryStore(database)
+            conversation_id = store.create_conversation()
+            store.save_conversation_message(
+                conversation_id, "user", "Tôi đang học Python"
+            )
+            store.save_conversation_message(
+                conversation_id, "assistant", "Mình có thể cùng bạn học."
+            )
+
+            reopened_store = MemoryStore(database)
+            self.assertEqual(
+                reopened_store.load_conversation(conversation_id),
+                [
+                    {"role": "user", "content": "Tôi đang học Python"},
+                    {"role": "assistant", "content": "Mình có thể cùng bạn học."},
+                ],
+            )
+            self.assertEqual(
+                reopened_store.list_conversations()[0]["title"],
+                "Tôi đang học Python",
+            )
+            self.assertEqual(reopened_store.clear_conversations(), 1)
+            self.assertEqual(reopened_store.list_conversations(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

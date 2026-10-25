@@ -3,12 +3,14 @@ from __future__ import annotations
 import sys
 
 from assistant_desktop.browser_tools import read_webpage
-from assistant_desktop.desktop_tools import DesktopToolError
+from assistant_desktop.browser_tools import automate_webpage
+from assistant_desktop.desktop_tools import DesktopToolError, describe_tool_call
 from assistant_desktop.memory import MemoryStore
 from assistant_desktop.workspace_tools import (
     delete_workspace_file,
     get_workspace_root,
     list_workspace,
+    mcp_permission_enabled,
     read_workspace_file,
     run_allowed_command,
     write_workspace_file,
@@ -40,12 +42,22 @@ def create_server():
 
     @server.tool()
     def workspace_write(path: str, content: str) -> str:
-        """Ghi tệp tối đa 1 MB trong workspace; cấu hình MCP client để hỏi trước."""
+        """Ghi tệp trong workspace; yêu cầu ASSISTANT_MCP_ALLOW_FILE_WRITE bật."""
+        if not mcp_permission_enabled("file_write"):
+            raise DesktopToolError(
+                "MCP file write đang tắt. Chỉ bật ASSISTANT_MCP_ALLOW_FILE_WRITE "
+                "trong tiến trình MCP tin cậy sau khi cấu hình xác nhận phía client."
+            )
         return write_workspace_file(root, path, content)
 
     @server.tool()
     def workspace_delete(path: str) -> str:
-        """Xóa một tệp duy nhất trong workspace; cấu hình MCP client để hỏi trước."""
+        """Xóa một tệp; yêu cầu ASSISTANT_MCP_ALLOW_FILE_DELETE bật."""
+        if not mcp_permission_enabled("file_delete"):
+            raise DesktopToolError(
+                "MCP file delete đang tắt. Chỉ bật ASSISTANT_MCP_ALLOW_FILE_DELETE "
+                "trong tiến trình MCP tin cậy sau khi cấu hình xác nhận phía client."
+            )
         return delete_workspace_file(root, path)
 
     @server.tool()
@@ -54,8 +66,29 @@ def create_server():
         return read_webpage(url)
 
     @server.tool()
+    def webpage_automate(
+        url: str, actions: list[dict[str, str]]
+    ) -> str:
+        """Tự động hóa browser; yêu cầu ASSISTANT_MCP_ALLOW_BROWSER_AUTOMATION bật."""
+        if not mcp_permission_enabled("browser_automation"):
+            raise DesktopToolError(
+                "MCP browser automation đang tắt. Bật "
+                "ASSISTANT_MCP_ALLOW_BROWSER_AUTOMATION trong tiến trình MCP "
+                "tin cậy sau khi cấu hình xác nhận phía client."
+            )
+        describe_tool_call(
+            "browser_automate", {"url": url, "actions": actions}
+        )
+        return automate_webpage(url, actions)
+
+    @server.tool()
     def allowed_command(command_id: str) -> str:
-        """Chạy một lệnh phiên bản cố định; không nhận lệnh shell tùy ý."""
+        """Chạy lệnh phiên bản cố định; yêu cầu ASSISTANT_MCP_ALLOW_SYSTEM_COMMANDS bật."""
+        if not mcp_permission_enabled("system_commands"):
+            raise DesktopToolError(
+                "MCP system commands đang tắt. Bật "
+                "ASSISTANT_MCP_ALLOW_SYSTEM_COMMANDS trong tiến trình MCP tin cậy."
+            )
         return run_allowed_command(command_id)
 
     @server.tool()
@@ -70,13 +103,23 @@ def create_server():
 
     @server.tool()
     def memory_add(fact: str) -> str:
-        """Lưu một ghi chú memory không nhạy cảm theo yêu cầu."""
+        """Lưu ghi chú; yêu cầu ASSISTANT_MCP_ALLOW_MEMORY_WRITE bật."""
+        if not mcp_permission_enabled("memory_write"):
+            raise DesktopToolError(
+                "MCP memory write đang tắt. Chỉ bật ASSISTANT_MCP_ALLOW_MEMORY_WRITE "
+                "trong tiến trình MCP tin cậy sau khi cấu hình xác nhận phía client."
+            )
         memory.add(fact)
         return "Đã lưu ghi chú memory cục bộ."
 
     @server.tool()
     def memory_clear() -> str:
-        """Xóa toàn bộ memory cục bộ."""
+        """Xóa memory; yêu cầu ASSISTANT_MCP_ALLOW_MEMORY_CLEAR bật."""
+        if not mcp_permission_enabled("memory_clear"):
+            raise DesktopToolError(
+                "MCP memory clear đang tắt. Chỉ bật ASSISTANT_MCP_ALLOW_MEMORY_CLEAR "
+                "trong tiến trình MCP tin cậy sau khi cấu hình xác nhận phía client."
+            )
         return f"Đã xóa {memory.clear()} ghi chú memory."
 
     return server
